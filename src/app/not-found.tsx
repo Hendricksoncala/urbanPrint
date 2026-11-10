@@ -1,0 +1,1 @@
+import Link from 'next/link';export default function NotFound(){return <section className="section auth-page"><p className="eyebrow">404 · PERDIDA DE SEÑAL</p><h1>ESTA PÁGINA<br/><em>NO ESTÁ EN EL MAPA.</em></h1><Link className="button" href="/">Volver al inicio</Link></section>}

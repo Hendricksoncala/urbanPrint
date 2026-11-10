@@ -1,0 +1,1 @@
+import type {MetadataRoute} from 'next';export default function sitemap():MetadataRoute.Sitemap{return ['','catalogo','personalizar','mayoristas','nosotros','contacto','envios','devoluciones','terminos','privacidad','preguntas'].map(p=>({url:`https://urbanprint.co/${p}`,lastModified:new Date(),changeFrequency:'weekly',priority:p===''?1:.7}))}

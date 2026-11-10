@@ -1,0 +1,2 @@
+export const config={shipping:12000,freeShipping:150000,wholesaleFrom:6,wholesalePrice:40000,colors:[{name:'Negro',hex:'#181818'},{name:'Blanco',hex:'#eeeae3'},{name:'Gris',hex:'#777a7d'},{name:'Azul marino',hex:'#172943'},{name:'Rojo',hex:'#9f292e'},{name:'Verde militar',hex:'#566047'},{name:'Arena',hex:'#c6ae8c'}],sizes:['XS','S','M','L','XL','XXL']};
+export const cop=(n:number)=>new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(n);

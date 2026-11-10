@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("CUSTOMER")
+  orders    Order[]
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String
+  price       Int
+  category    String
+  image       String
+  stock       Int      @default(10)
+  variants    InventoryVariant[]
+  createdAt   DateTime @default(now())
+}
+
+model InventoryVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  color     String
+  size      String
+  stock     Int     @default(10)
+  @@unique([productId, color, size])
+}
+
+model Order {
+  id        String   @id @default(cuid())
+  number    String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  status    String   @default("RECIBIDO")
+  total     Int
+  items     String
+  address   String
+  email     String
+  payment   String
+  designAssets DesignAsset[]
+  createdAt DateTime @default(now())
+}
+
+model DesignAsset {
+  id             String @id @default(cuid())
+  orderId        String
+  order          Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  cartItemId     String
+  originalUrl    String
+  frontRenderUrl String?
+  backRenderUrl  String?
+  configuration  String
+}
+
+model Subscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+model Quote {
+  id        String   @id @default(cuid())
+  name      String
+  company   String
+  city      String
+  quantity  Int
+  email     String
+  message   String
+  createdAt DateTime @default(now())
+}
