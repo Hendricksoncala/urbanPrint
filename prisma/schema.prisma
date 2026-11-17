@@ -51,7 +51,39 @@ model Order {
   address   String
   email     String
   payment   String
+  paymentStatus String @default("PENDING")
+  paymentAmountInCents Int?
+  paymentReference String? @unique
+  paymentTransactionId String? @unique
+  paymentProofUrl String?
   designAssets DesignAsset[]
+  paymentEvents PaymentEvent[]
+  paymentProofs PaymentProof[]
+  createdAt DateTime @default(now())
+}
+
+model PaymentEvent {
+  id              String   @id @default(cuid())
+  providerEventKey String   @unique
+  eventType       String
+  transactionId   String
+  reference       String
+  status          String
+  checksum        String
+  eventTimestamp  String
+  payload         String
+  orderId         String?
+  order           Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  receivedAt      DateTime @default(now())
+}
+
+model PaymentProof {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId    String
+  url       String   @unique
+  mime      String
   createdAt DateTime @default(now())
 }
 

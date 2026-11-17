@@ -6,6 +6,7 @@ import {setSession,session} from '@/lib/auth';
 import {redirect} from 'next/navigation';
 import {config} from '@/lib/config';
 import {cookies} from 'next/headers';
+import {wompiEnabled,wompiCheckoutUrl} from '@/lib/payments';
 
 export async function register(form:FormData){
  const v=z.object({name:z.string().trim().min(2),email:z.string().trim().email(),password:z.string().min(8)}).safeParse(Object.fromEntries(form));
@@ -34,8 +35,9 @@ const uploadUrl=z.string().regex(/^\/uploads\/[0-9a-f-]{36}\.(?:png|jpg|webp|svg
 const orderLine=z.object({id:z.string().min(1).max(300),slug:z.string().min(1).max(150),quantity:z.number().int().min(1).max(99),size:z.enum(['XS','S','M','L','XL','XXL']),color:z.string().min(1).max(40),originalUrl:uploadUrl.optional(),frontRenderUrl:uploadUrl.optional(),backRenderUrl:uploadUrl.optional(),frontConfig:designConfig.optional(),backConfig:designConfig.optional()});
 export async function submitOrder(form:FormData){
  const user=await session();if(!user)redirect('/login?next=/checkout');
- const parsed=z.object({name:z.string().trim().min(2).max(100),address:z.string().trim().min(5).max(300),city:z.string().trim().min(2).max(100),department:z.string().trim().min(2).max(100),payment:z.enum(['Transferencia bancaria','Nequi','Contraentrega']),items:z.string().min(2).max(100_000)}).safeParse(Object.fromEntries(form));
+ const parsed=z.object({name:z.string().trim().min(2).max(100),address:z.string().trim().min(5).max(300),city:z.string().trim().min(2).max(100),department:z.string().trim().min(2).max(100),payment:z.enum(['Nequi (QR)','Transferencia bancaria','Contraentrega','Wompi']),items:z.string().min(2).max(100_000)}).safeParse(Object.fromEntries(form));
  if(!parsed.success)throw new Error('Revisa los datos de entrega y pago.');
+ if(parsed.data.payment==='Wompi'&&!wompiEnabled())throw new Error('Wompi está deshabilitado: configura llave pública, secreto de integridad y secreto de eventos.');
  let raw:unknown;try{raw=JSON.parse(parsed.data.items)}catch{throw new Error('El carrito está vacío o no es válido.')}
  const lines=z.array(orderLine).min(1).max(50).safeParse(raw);if(!lines.success)throw new Error('El carrito está vacío o no es válido.');
  const city=parsed.data.city.toLocaleLowerCase('es-CO');
@@ -53,16 +55,22 @@ export async function submitOrder(form:FormData){
   const price=line.quantity>=config.wholesaleFrom?config.wholesalePrice:product.price;subtotal+=price*line.quantity;
   orderItems.push({id:line.id,name:product.name,quantity:line.quantity,size:line.size,color:line.color,unitPrice:price});
  }
- const local=['bucaramanga','floridablanca','girón','piedecuesta'].includes(city);const shipping=local||subtotal>=config.freeShipping?0:config.shipping;let number='';
+ const local=['bucaramanga','floridablanca','girón','piedecuesta'].includes(city);const shipping=local||subtotal>=config.freeShipping?0:config.shipping;let number='';let reference:string|null=null;const total=subtotal+shipping;const base=process.env.NEXT_PUBLIC_SITE_URL||'http://localhost:3000';
  await db.$transaction(async tx=>{
-  const count=await tx.order.count();number=`UP-${String(count+1).padStart(6,'0')}`;
+  const count=await tx.order.count();number=`UP-${String(count+1).padStart(6,'0')}`;if(parsed.data.payment==='Wompi')reference=`${number}-${Date.now()}`;
   for(const line of lines.data){if(line.slug.startsWith('custom-'))continue;const product=await tx.product.findUnique({where:{slug:line.slug},select:{id:true}});if(!product)throw new Error('Producto no disponible.');
    const variant=await tx.inventoryVariant.updateMany({where:{productId:product.id,color:line.color,size:line.size,stock:{gte:line.quantity}},data:{stock:{decrement:line.quantity}}});
    const stock=await tx.product.updateMany({where:{id:product.id,stock:{gte:line.quantity}},data:{stock:{decrement:line.quantity}}});
    if(!variant.count||!stock.count)throw new Error('El inventario cambió. Actualiza tu carrito e intenta de nuevo.');
   }
-  const order=await tx.order.create({data:{number,userId:user.id,email:user.email,total:subtotal+shipping,address:`${parsed.data.name} · ${parsed.data.address}, ${parsed.data.city}, ${parsed.data.department}`,payment:parsed.data.payment,items:JSON.stringify(orderItems)}});
+  const pendingStatus=parsed.data.payment==='Contraentrega'?'DUE_ON_DELIVERY':parsed.data.payment==='Wompi'?'PENDING':'AWAITING_PROOF';const status=parsed.data.payment==='Contraentrega'?'Recibido':parsed.data.payment==='Wompi'?'Pago pendiente':'Pendiente de pago';
+  const order=await tx.order.create({data:{number,userId:user.id,email:user.email,total, address:`${parsed.data.name} · ${parsed.data.address}, ${parsed.data.city}, ${parsed.data.department}`,payment:parsed.data.payment,paymentStatus:pendingStatus,paymentAmountInCents:total*100,paymentReference:reference,items:JSON.stringify(orderItems),status}});
   for(const line of lines.data){if(!line.slug.startsWith('custom-'))continue;await tx.designAsset.create({data:{orderId:order.id,cartItemId:line.id,originalUrl:line.originalUrl!,frontRenderUrl:line.frontRenderUrl!,backRenderUrl:line.backRenderUrl!,configuration:JSON.stringify({front:line.frontConfig,back:line.backConfig})}})}
  });
+ if(parsed.data.payment==='Wompi'){const url=wompiCheckoutUrl({reference:reference!,amountInCents:total*100,redirectUrl:`${base.replace(/\/$/,'')}/pago/resultado`});redirect(url)}
  redirect(`/pedido-confirmado?numero=${number}`);
 }
+
+export async function submitPaymentProof(form:FormData){const user=await session();if(!user)redirect('/login');const v=z.object({number:z.string().regex(/^UP-\d{6,12}$/),url:z.string().regex(/^\/uploads\/payment-proofs\/[0-9a-f-]{36}\.(?:png|jpg|webp|pdf)$/i)}).safeParse(Object.fromEntries(form));if(!v.success)throw new Error('No pudimos validar el comprobante.');const proof=await db.paymentProof.findUnique({where:{url:v.data.url}});if(!proof||proof.userId!==user.id)throw new Error('No encontramos el archivo cargado para este pedido.');const updated=await db.order.updateMany({where:{id:proof.orderId,userId:user.id,number:v.data.number,payment:{in:['Nequi (QR)','Transferencia bancaria']},paymentProofUrl:null},data:{paymentProofUrl:proof.url,paymentStatus:'MANUAL_REVIEW',status:'Pago por verificar'}});if(!updated.count)throw new Error('Este pedido no puede recibir otro comprobante.');redirect(`/pedido-confirmado?numero=${v.data.number}`)}
+
+export async function reviewManualPayment(form:FormData){const user=await session();if(!user||user.role!=='ADMIN')throw new Error('Acceso denegado.');const v=z.object({number:z.string().regex(/^UP-\d{6,12}$/),decision:z.enum(['approve','reject'])}).safeParse(Object.fromEntries(form));if(!v.success)throw new Error('Revisa la decisión.');const paymentStatus=v.data.decision==='approve'?'PAID':'REJECTED';const status=v.data.decision==='approve'?'En producción':'Pago rechazado';const result=await db.order.updateMany({where:{number:v.data.number,payment:{in:['Nequi (QR)','Transferencia bancaria']},paymentStatus:'MANUAL_REVIEW',paymentProofUrl:{not:null}},data:{paymentStatus,status}});if(!result.count)throw new Error('El pedido ya fue revisado o no tiene comprobante.');redirect('/admin')}

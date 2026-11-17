@@ -30,9 +30,19 @@ Visita http://localhost:3000. El build de producción se genera con `npm run bui
 
 Los 12 diseños de seed usan composiciones originales generadas con SVG dentro del componente de vista de prenda. Los precios y escalas se modifican en `src/lib/config.ts` y los productos en el seed/BD.
 
-## Pagos e integración
+## Pagos manuales y Wompi
 
-Nequi y transferencia se muestran como instrucciones de demostración; sustituye esos datos por información comercial verificada antes de aceptar pagos. Contraentrega y Wompi requieren conectar una pasarela de pedido antes de producción. Configura `WOMPI_PUBLIC_KEY` y `WOMPI_PRIVATE_KEY` en `.env`; el ejemplo deja el punto de integración documentado, no procesa pagos reales. Usa `AUTH_SECRET` aleatorio en despliegues y no publiques el archivo `.env`.
+Nequi QR y transferencia quedan disponibles sin llaves externas. Tras crear el pedido se muestra el total y la referencia; el cliente carga un comprobante PNG/JPG/WebP/PDF de hasta 5 MB. El servidor valida la firma del archivo, lo guarda con UUID y pone el pedido en **Pago por verificar**. En `/admin`, un administrador puede aprobarlo (pasa a **En producción**) o rechazarlo. Contraentrega solo permite Bucaramanga, Floridablanca, Girón y Piedecuesta.
+
+El archivo `public/qr-nequi.png` incluido es deliberadamente un QR de muestra no pagable. Antes de recibir pagos, reemplázalo por el QR real de la cuenta Nequi del comercio y confirma que el titular sea el esperado. Configura los datos de transferencia en `.env`: `BANK_NAME`, `BANK_ACCOUNT`, `BANK_HOLDER`, `BANK_DOCUMENT`. Los valores de ejemplo no reciben dinero.
+
+Wompi usa Web Checkout con firma SHA-256 y deja la opción deshabilitada mientras falta cualquiera de `WOMPI_PUBLIC_KEY`, `WOMPI_INTEGRITY_SECRET`, `WOMPI_EVENTS_SECRET`. Selecciona `WOMPI_ENV="sandbox"` para pruebas. Obtén las llaves públicas y los secretos separados de integridad/eventos en el Dashboard de Wompi, menú **Desarrolladores**; conserva esos valores solo en el servidor. En el dashboard registra `https://TU_DOMINIO/api/wompi/webhook` como URL de eventos para el ambiente correspondiente. `NEXT_PUBLIC_SITE_URL` debe ser la URL pública HTTPS del sitio para la redirección de retorno.
+
+El retorno consulta `GET /v1/transactions/{id}` directamente desde el servidor y coteja referencia, moneda e importe con el pedido. El webhook verifica `signature.properties`, `timestamp` y el secreto de eventos, guarda cada evento en `PaymentEvent`, ignora duplicados y aplica actualizaciones solo a la referencia/importe esperados.
+
+En sandbox, las tarjetas de prueba documentadas por Wompi son `4242 4242 4242 4242` para aprobación y `4111 1111 1111 1111` para declinación; usa fecha futura y CVC de tres dígitos. Para Nequi sandbox, `3991111111` aprueba y `3992222222` declina. El Web Checkout ofrece además PSE y Botón Bancolombia; estos flujos pueden presentar su selector de resultado de prueba. La información de sandbox y las transacciones son independientes de producción.
+
+En producción cambia `WOMPI_ENV="production"`, coloca llaves con prefijo `pub_prod_` y secretos de producción, configura el webhook de producción y una URL de retorno HTTPS real. Nunca publiques `.env`. Referencias oficiales: [Web Checkout e integridad](https://docs.wompi.co/docs/colombia/widget-checkout-web/), [Eventos y checksum](https://docs.wompi.co/docs/colombia/eventos/), [Ambientes y llaves](https://docs.wompi.co/docs/colombia/ambientes-y-llaves/) y [datos de prueba](https://docs.wompi.co/docs/colombia/datos-de-prueba-en-sandbox/).
 
 ## Despliegue y siguientes mejoras
 
