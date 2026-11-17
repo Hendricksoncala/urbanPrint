@@ -7,3 +7,5 @@ prisma/*.db
 prisma/*.db-journal
 public/uploads/*
 !public/uploads/.gitkeep
+.vercel
+.env*
