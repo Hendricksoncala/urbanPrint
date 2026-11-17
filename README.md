@@ -1,10 +1,10 @@
 # UrbanPrint
 
-Tienda de camisetas urbanas y personalizadas de Bucaramanga. Construida con Next.js App Router, TypeScript, Tailwind, Prisma/SQLite, Zustand, JWT en cookie y bcrypt.
+Tienda de camisetas urbanas y personalizadas de Bucaramanga. Construida con Next.js App Router, TypeScript, Tailwind, Prisma/PostgreSQL, Zustand, JWT en cookie y bcrypt.
 
 ## Inicio rápido
 
-Requiere Node.js 20 o superior. Copia `.env.example` a `.env`, instala dependencias y prepara SQLite:
+Requiere Node.js 20 o superior. Copia `.env.example` a `.env`, instala dependencias y prepara PostgreSQL con la URL `DATABASE_URL` del proveedor:
 
 ```bash
 npm install
@@ -26,13 +26,21 @@ Visita http://localhost:3000. El build de producción se genera con `npm run bui
 - `src/app`: home, catálogo, producto, personalizador, carrito, autenticación, cuenta, checkout, mayoristas, admin y contenido legal.
 - `src/components`: carrito global y vista vectorial de prendas.
 - `src/lib/config.ts`: envío ($12.000 nacional; gratis desde $150.000), colores, tallas y escalón mayorista (6 unidades, $40.000 c/u).
-- `prisma/schema.prisma` y `prisma/seed.ts`: datos y modelos locales.
+- `prisma/schema.prisma` y `prisma/seed.ts`: datos y seed.
 
 Los 12 diseños de seed usan composiciones originales generadas con SVG dentro del componente de vista de prenda. Los precios y escalas se modifican en `src/lib/config.ts` y los productos en el seed/BD.
 
+## Vercel y configuración de producción
+
+1. Crea una base PostgreSQL administrada (por ejemplo Vercel Postgres/Neon) y configura `DATABASE_URL` como URL PostgreSQL con SSL.
+2. Crea un Blob Store público en Vercel, conéctalo al proyecto y configura `BLOB_READ_WRITE_TOKEN` para los entornos que usarás.
+3. Configura `AUTH_SECRET` con un valor aleatorio largo, `NEXT_PUBLIC_WHATSAPP_NUMBER`, `NEXT_PUBLIC_SITE_URL` y los secretos de Wompi si habilitarás la pasarela. `BANK_NAME`, `BANK_ACCOUNT`, `BANK_HOLDER` y `BANK_DOCUMENT` son opcionales para transferencia.
+4. En el despliegue, `postinstall` genera Prisma Client y el build ejecuta `prisma generate && next build`. Antes de recibir tráfico, aplica el schema y carga el seed desde un entorno con acceso a PostgreSQL: `npm run db:push` y `npm run db:seed`.
+
+Las cargas de diseño (máximo 10 MB) y comprobantes (máximo 5 MB) pasan por validación de contenido MIME en servidor antes de guardarse en Blob. `public/qr-nequi.png` sigue siendo un recurso estático del repositorio y debe reemplazarse por el QR real.
 ## Pagos manuales y Wompi
 
-Nequi QR y transferencia quedan disponibles sin llaves externas. Tras crear el pedido se muestra el total y la referencia; el cliente carga un comprobante PNG/JPG/WebP/PDF de hasta 5 MB. El servidor valida la firma del archivo, lo guarda con UUID y pone el pedido en **Pago por verificar**. En `/admin`, un administrador puede aprobarlo (pasa a **En producción**) o rechazarlo. Contraentrega solo permite Bucaramanga, Floridablanca, Girón y Piedecuesta.
+Nequi QR y transferencia quedan disponibles sin llaves externas. Tras crear el pedido se muestra el total y la referencia; el cliente carga un comprobante PNG/JPG/WebP/PDF de hasta 5 MB. El servidor valida la firma real del archivo, lo guarda en Vercel Blob con un nombre UUID y pone el pedido en **Pago por verificar**. Las imágenes y comprobantes usan la URL HTTPS devuelta por Blob. En `/admin`, un administrador puede aprobarlo (pasa a **En producción**) o rechazarlo. Contraentrega solo permite Bucaramanga, Floridablanca, Girón y Piedecuesta.
 
 El archivo `public/qr-nequi.png` incluido es deliberadamente un QR de muestra no pagable. Antes de recibir pagos, reemplázalo por el QR real de la cuenta Nequi del comercio y confirma que el titular sea el esperado. Configura los datos de transferencia en `.env`: `BANK_NAME`, `BANK_ACCOUNT`, `BANK_HOLDER`, `BANK_DOCUMENT`. Los valores de ejemplo no reciben dinero.
 
@@ -46,7 +54,7 @@ En producción cambia `WOMPI_ENV="production"`, coloca llaves con prefijo `pub_p
 
 ## Despliegue y siguientes mejoras
 
-Para Vercel, cambia SQLite por PostgreSQL administrado (por ejemplo Neon/Supabase) o Turso mediante un adaptador compatible; configura secretos y persistencia de archivos en almacenamiento de objetos. Mejoras recomendadas: órdenes transaccionales con descuento de inventario, pasarela Wompi, comprobantes protegidos, edición completa por talla/color en admin, recuperación de contraseña por correo, gestión de descuentos y persistencia de los artes personalizados.
+Configura PostgreSQL administrado y Vercel Blob usando las variables indicadas arriba. Mejoras recomendadas: órdenes transaccionales con descuento de inventario, comprobantes privados, edición completa por talla/color en admin, recuperación de contraseña por correo y gestión de descuentos.
 
 ## Supuestos
 
