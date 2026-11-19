@@ -14,6 +14,8 @@ model User {
   password  String
   role      String   @default("CUSTOMER")
   orders    Order[]
+  reviewedPayments Payment[] @relation("PaymentReviewer")
+  paymentEvents PaymentEvent[] @relation("PaymentActor")
   createdAt DateTime @default(now())
 }
 
@@ -59,22 +61,72 @@ model Order {
   designAssets DesignAsset[]
   paymentEvents PaymentEvent[]
   paymentProofs PaymentProof[]
+  manualPayment Payment?
+  stockReserved Boolean @default(true)
   createdAt DateTime @default(now())
 }
 
 model PaymentEvent {
   id              String   @id @default(cuid())
-  providerEventKey String   @unique
-  eventType       String
-  transactionId   String
-  reference       String
-  status          String
-  checksum        String
-  eventTimestamp  String
-  payload         String
+  paymentId       String?
+  payment         Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  type            String   @default("SYSTEM")
+  actorId         String?
+  actor           User?    @relation("PaymentActor", fields: [actorId], references: [id], onDelete: SetNull)
+  note            String?
+  createdAt       DateTime @default(now())
+  providerEventKey String? @unique
+  eventType       String?
+  transactionId   String?
+  reference       String?
+  status          String?
+  checksum        String?
+  eventTimestamp  String?
+  payload         String?
   orderId         String?
   order           Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
   receivedAt      DateTime @default(now())
+  @@index([paymentId, createdAt])
+}
+
+enum PaymentStatus {
+  PENDING_PROOF
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  orderId        String        @unique
+  order          Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method         String
+  expectedAmount Int
+  status         PaymentStatus @default(PENDING_PROOF)
+  proofUrl       String?
+  payerName      String?
+  bankReference  String?       @unique
+  paidAt         DateTime?
+  declaredAmount Int?
+  reviewedById   String?
+  reviewedBy     User?         @relation("PaymentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt     DateTime?
+  rejectReason   String?
+  proofDueAt     DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  events         PaymentEvent[]
+  @@index([status, proofDueAt])
+}
+
+model PaymentUploadAttempt {
+  id        String   @id @default(cuid())
+  ipHash    String
+  orderId   String
+  createdAt DateTime @default(now())
+  @@index([ipHash, createdAt])
+  @@index([orderId, createdAt])
 }
 
 model PaymentProof {

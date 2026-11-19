@@ -43,17 +43,17 @@ export async function submitOrder(form:FormData){
  const city=parsed.data.city.toLocaleLowerCase('es-CO');
  if(parsed.data.payment==='Contraentrega'&&!['bucaramanga','floridablanca','girón','piedecuesta'].includes(city))throw new Error('El pago contraentrega solo está disponible en el área metropolitana de Bucaramanga.');
  let subtotal=0;
- const orderItems:{id:string;name:string;quantity:number;size:string;color:string;unitPrice:number;designId?:string}[]=[];
+ const orderItems:{id:string;slug:string;name:string;quantity:number;size:string;color:string;unitPrice:number;designId?:string}[]=[];
  for(const line of lines.data){
   if(!config.colors.some(c=>c.name===line.color))throw new Error('Color no disponible.');
   if(line.slug.startsWith('custom-')){
    if(!line.originalUrl||!line.frontRenderUrl||!line.backRenderUrl||!line.frontConfig||!line.backConfig)throw new Error('Faltan los archivos o la configuración del diseño personalizado.');
    const price=line.quantity>=config.wholesaleFrom?config.wholesalePrice:55000;subtotal+=price*line.quantity;
-   orderItems.push({id:line.id,name:'Camisa personalizada',quantity:line.quantity,size:line.size,color:line.color,unitPrice:price,designId:line.slug.slice(7)});continue;
+   orderItems.push({id:line.id,slug:line.slug,name:'Camisa personalizada',quantity:line.quantity,size:line.size,color:line.color,unitPrice:price,designId:line.slug.slice(7)});continue;
   }
   const product=await db.product.findUnique({where:{slug:line.slug}});if(!product)throw new Error('Un producto del carrito ya no está disponible.');
   const price=line.quantity>=config.wholesaleFrom?config.wholesalePrice:product.price;subtotal+=price*line.quantity;
-  orderItems.push({id:line.id,name:product.name,quantity:line.quantity,size:line.size,color:line.color,unitPrice:price});
+  orderItems.push({id:line.id,slug:line.slug,name:product.name,quantity:line.quantity,size:line.size,color:line.color,unitPrice:price});
  }
  const local=['bucaramanga','floridablanca','girón','piedecuesta'].includes(city);const shipping=local||subtotal>=config.freeShipping?0:config.shipping;let number='';let reference:string|null=null;const total=subtotal+shipping;const base=process.env.NEXT_PUBLIC_SITE_URL||'http://localhost:3000';
  await db.$transaction(async tx=>{
@@ -63,14 +63,40 @@ export async function submitOrder(form:FormData){
    const stock=await tx.product.updateMany({where:{id:product.id,stock:{gte:line.quantity}},data:{stock:{decrement:line.quantity}}});
    if(!variant.count||!stock.count)throw new Error('El inventario cambió. Actualiza tu carrito e intenta de nuevo.');
   }
-  const pendingStatus=parsed.data.payment==='Contraentrega'?'DUE_ON_DELIVERY':parsed.data.payment==='Wompi'?'PENDING':'AWAITING_PROOF';const status=parsed.data.payment==='Contraentrega'?'Recibido':parsed.data.payment==='Wompi'?'Pago pendiente':'Pendiente de pago';
-  const order=await tx.order.create({data:{number,userId:user.id,email:user.email,total, address:`${parsed.data.name} · ${parsed.data.address}, ${parsed.data.city}, ${parsed.data.department}`,payment:parsed.data.payment,paymentStatus:pendingStatus,paymentAmountInCents:total*100,paymentReference:reference,items:JSON.stringify(orderItems),status}});
+  const pendingStatus=parsed.data.payment==='Contraentrega'?'DUE_ON_DELIVERY':parsed.data.payment==='Wompi'?'PENDING':'PENDING_PROOF';const status=parsed.data.payment==='Contraentrega'?'Recibido':parsed.data.payment==='Wompi'?'Pago pendiente':['Nequi (QR)','Transferencia bancaria'].includes(parsed.data.payment)?'Pendiente de comprobante':'Pendiente de pago';
+  const manualPayment=['Nequi (QR)','Transferencia bancaria'].includes(parsed.data.payment);
+  const order=await tx.order.create({data:{number,userId:user.id,email:user.email,total,address:`${parsed.data.name} · ${parsed.data.address}, ${parsed.data.city}, ${parsed.data.department}`,payment:parsed.data.payment,paymentStatus:manualPayment?'PENDING_PROOF':pendingStatus,paymentAmountInCents:total*100,paymentReference:reference,items:JSON.stringify(orderItems),status,stockReserved:true}});
+  if(manualPayment){const payment=await tx.payment.create({data:{orderId:order.id,method:parsed.data.payment,expectedAmount:total,status:'PENDING_PROOF',proofDueAt:new Date(Date.now()+48*60*60*1000)}});await tx.paymentEvent.create({data:{paymentId:payment.id,type:'PENDING_PROOF',actorId:user.id,note:`Pedido creado. Monto esperado: ${total} COP.`}})}
   for(const line of lines.data){if(!line.slug.startsWith('custom-'))continue;await tx.designAsset.create({data:{orderId:order.id,cartItemId:line.id,originalUrl:line.originalUrl!,frontRenderUrl:line.frontRenderUrl!,backRenderUrl:line.backRenderUrl!,configuration:JSON.stringify({front:line.frontConfig,back:line.backConfig})}})}
  });
  if(parsed.data.payment==='Wompi'){const url=wompiCheckoutUrl({reference:reference!,amountInCents:total*100,redirectUrl:`${base.replace(/\/$/,'')}/pago/resultado`});redirect(url)}
  redirect(`/pedido-confirmado?numero=${number}`);
 }
 
-export async function submitPaymentProof(form:FormData){const user=await session();if(!user)redirect('/login');const v=z.object({number:z.string().regex(/^UP-\d{6,12}$/),url:uploadUrl}).safeParse(Object.fromEntries(form));if(!v.success)throw new Error('No pudimos validar el comprobante.');const proof=await db.paymentProof.findUnique({where:{url:v.data.url}});if(!proof||proof.userId!==user.id)throw new Error('No encontramos el archivo cargado para este pedido.');const updated=await db.order.updateMany({where:{id:proof.orderId,userId:user.id,number:v.data.number,payment:{in:['Nequi (QR)','Transferencia bancaria']},paymentProofUrl:null},data:{paymentProofUrl:proof.url,paymentStatus:'MANUAL_REVIEW',status:'Pago por verificar'}});if(!updated.count)throw new Error('Este pedido no puede recibir otro comprobante.');redirect(`/pedido-confirmado?numero=${v.data.number}`)}
-
-export async function reviewManualPayment(form:FormData){const user=await session();if(!user||user.role!=='ADMIN')throw new Error('Acceso denegado.');const v=z.object({number:z.string().regex(/^UP-\d{6,12}$/),decision:z.enum(['approve','reject'])}).safeParse(Object.fromEntries(form));if(!v.success)throw new Error('Revisa la decisión.');const paymentStatus=v.data.decision==='approve'?'PAID':'REJECTED';const status=v.data.decision==='approve'?'En producción':'Pago rechazado';const result=await db.order.updateMany({where:{number:v.data.number,payment:{in:['Nequi (QR)','Transferencia bancaria']},paymentStatus:'MANUAL_REVIEW',paymentProofUrl:{not:null}},data:{paymentStatus,status}});if(!result.count)throw new Error('El pedido ya fue revisado o no tiene comprobante.');redirect('/admin')}
+export async function reviewManualPayment(form:FormData){
+ const admin=await session();if(!admin||admin.role!=='ADMIN')throw new Error('Acceso denegado.');
+ const parsed=z.object({paymentId:z.string().min(1),decision:z.enum(['approve','reject']),verified:z.literal('on').optional(),rejectReason:z.string().trim().max(500).optional()}).safeParse(Object.fromEntries(form));
+ if(!parsed.success)throw new Error('Revisa la decisión.');
+ if(parsed.data.decision==='approve'&&parsed.data.verified!=='on')throw new Error('Confirma que verificaste el abono en Nequi antes de aprobar.');
+ if(parsed.data.decision==='reject'&&!parsed.data.rejectReason)throw new Error('Escribe el motivo del rechazo.');
+ await db.$transaction(async tx=>{
+  const payment=await tx.payment.findUnique({where:{id:parsed.data.paymentId},include:{order:true}});
+  if(!payment||payment.status!=='PENDING_REVIEW'||!payment.proofUrl)throw new Error('Este pago ya fue revisado o no tiene comprobante.');
+  const now=new Date();
+  if(parsed.data.decision==='reject'){
+   await tx.payment.update({where:{id:payment.id},data:{status:'PENDING_PROOF',rejectReason:parsed.data.rejectReason!,reviewedById:admin.id,reviewedAt:now,proofDueAt:new Date(now.getTime()+48*60*60*1000)}});
+   await tx.order.update({where:{id:payment.orderId},data:{paymentStatus:'PENDING_PROOF',paymentProofUrl:payment.proofUrl,status:'Comprobante rechazado'}});
+   await tx.paymentEvent.create({data:{paymentId:payment.id,type:'REJECTED',actorId:admin.id,note:`Motivo: ${parsed.data.rejectReason}. Referencia: ${payment.bankReference||'sin referencia'}; monto declarado: ${payment.declaredAmount??'sin dato'}; comprobante: ${payment.proofUrl}`}});
+   return;
+  }
+  if(!payment.order.stockReserved){
+   const items=JSON.parse(payment.order.items) as {slug?:string;color:string;size:string;quantity:number}[];
+   for(const item of items){if(!item.slug||item.slug.startsWith('custom-'))continue;const product=await tx.product.findUnique({where:{slug:item.slug},select:{id:true}});if(!product)throw new Error('No se pudo reservar el inventario para este pedido.');const variant=await tx.inventoryVariant.updateMany({where:{productId:product.id,color:item.color,size:item.size},data:{stock:{decrement:item.quantity}}});const stock=await tx.product.updateMany({where:{id:product.id,stock:{gte:item.quantity}},data:{stock:{decrement:item.quantity}}});if(!variant.count||!stock.count)throw new Error('Inventario insuficiente para confirmar el pago.');}
+   await tx.order.update({where:{id:payment.orderId},data:{stockReserved:true}});
+  }
+  await tx.payment.update({where:{id:payment.id},data:{status:'APPROVED',rejectReason:null,reviewedById:admin.id,reviewedAt:now}});
+  await tx.order.update({where:{id:payment.orderId},data:{paymentStatus:'APPROVED',paymentProofUrl:payment.proofUrl,status:'Pago confirmado'}});
+  await tx.paymentEvent.create({data:{paymentId:payment.id,type:'APPROVED',actorId:admin.id,note:`Abono verificado en la app bancaria. Monto esperado: ${payment.expectedAmount} COP; declarado: ${payment.declaredAmount??'sin dato'} COP; referencia: ${payment.bankReference||'sin referencia'}.`}});
+ });
+ redirect('/admin');
+}
